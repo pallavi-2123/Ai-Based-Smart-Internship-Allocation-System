@@ -1,0 +1,603 @@
+import re
+from collections import Counter
+
+def calculate_skill_match(student_skills: str, required: str) -> float:
+    """Calculate skill match percentage between student and required skills"""
+    if not student_skills or not required:
+        return 0.0
+    s = {x.strip().lower() for x in student_skills.split(',') if x.strip()}
+    r = {x.strip().lower() for x in required.split(',') if x.strip()}
+    if not r:
+        return 0.0
+    return round(len(s & r) / len(r) * 100, 2)
+
+
+def normalize_domain(d: str) -> str:
+    """Normalize domain names for comparison"""
+    return d.strip().lower().replace(" ", "").replace("-", "").replace("_", "")
+
+
+def is_resume_fake_or_spam(text: str) -> tuple[bool, str]:
+    """
+    ENHANCED: Detect if resume is fake, spam, or has gibberish content
+    Returns: (is_fake: bool, reason: str)
+    """
+    if not text or len(text.strip()) < 100:
+        return True, "Resume is empty or too short (minimum 100 characters required)"
+    
+    text_lower = text.lower()
+    words = text_lower.split()
+    
+    # ===== CRITICAL CHECKS =====
+    
+    # Check 1: Too many repeated characters (e.g., "aaaaaaa", "xxxxxxx")
+    repeated_chars = re.findall(r'(.)\1{6,}', text_lower)
+    if repeated_chars:
+        return True, "Resume contains excessive repeated characters (detected as spam)"
+    
+    # Check 2: Look for obvious spam/placeholder patterns (MOST COMMON ISSUE)
+    spam_patterns = [
+        'lorem ipsum',
+        'test test test',
+        'sample resume',
+        'this is a test',
+        'fake resume',
+        'dummy text',
+        'placeholder',
+        'example text',
+        'template resume',
+        'your name here',
+        'asdf',
+        'qwerty',
+        'xxxxxx',
+        'sample content',
+        'copy paste',
+        'random text'
+    ]
+    for pattern in spam_patterns:
+        if pattern in text_lower:
+            return True, f"Resume contains placeholder/test content: '{pattern}'"
+    
+    # Check 3: Must have common resume sections (CRITICAL)
+    required_sections = {
+        'education': ['education', 'academic', 'degree', 'university', 'college', 'school'],
+        'experience': ['experience', 'employment', 'work', 'internship', 'job'],
+        'skills': ['skill', 'technical', 'programming', 'technology', 'tools']
+    }
+    
+    sections_found = 0
+    for section_type, keywords in required_sections.items():
+        if any(keyword in text_lower for keyword in keywords):
+            sections_found += 1
+    
+    if sections_found < 2:
+        return True, "Resume missing critical sections (must have at least Education, Experience, OR Skills)"
+    
+    # Check 4: Check for actual professional/academic content
+    professional_indicators = [
+        # Educational terms
+        'university', 'college', 'degree', 'bachelor', 'master', 'graduation', 'gpa', 'cgpa',
+        'diploma', 'certificate', 'course', 'semester', 'academic', 'institute', 'school',
+        
+        # Professional terms
+        'project', 'internship', 'worked', 'developed', 'created', 'implemented', 'designed',
+        'built', 'managed', 'led', 'collaborated', 'achieved', 'improved', 'optimized',
+        'analyzed', 'researched', 'trained', 'mentored', 'coordinated', 'delivered',
+        
+        # Technical/skill terms
+        'programming', 'software', 'development', 'engineering', 'technology', 'system',
+        'application', 'database', 'algorithm', 'code', 'framework', 'tool', 'platform'
+    ]
+    
+    found_indicators = sum(1 for indicator in professional_indicators if indicator in text_lower)
+    
+    if found_indicators < 5:
+        return True, "Resume lacks sufficient professional/academic content (needs more education, work, or technical details)"
+    
+    # Check 5: Gibberish detection - words with unusual character patterns
+    if len(words) > 20:
+        gibberish_count = 0
+        for word in words:
+            if len(word) > 8:  # Check longer words
+                # Count vowels - gibberish has very few vowels
+                vowels = sum(1 for c in word if c in 'aeiou')
+                consonants = sum(1 for c in word if c.isalpha() and c not in 'aeiou')
+                
+                # Gibberish: < 15% vowels OR > 85% consonants
+                if len(word) > 0:
+                    vowel_ratio = vowels / len(word)
+                    if vowel_ratio < 0.15 or (consonants > 0 and vowels / consonants < 0.2):
+                        gibberish_count += 1
+        
+        # If > 20% of longer words are gibberish, reject
+        longer_words = [w for w in words if len(w) > 8]
+        if longer_words and gibberish_count / len(longer_words) > 0.2:
+            return True, "Resume contains excessive gibberish/random text (unreadable words detected)"
+    
+    # Check 6: Minimum meaningful content
+    meaningful_words = [w for w in words if len(w) > 3 and w.isalpha()]
+    if len(meaningful_words) < 30:
+        return True, "Resume has insufficient meaningful content (needs more substance)"
+    
+    # Check 7: Check for reasonable word variety (not just repeating same words)
+    if len(words) > 50:
+        unique_words = set(words)
+        uniqueness_ratio = len(unique_words) / len(words)
+        
+        if uniqueness_ratio < 0.3:  # Less than 30% unique words
+            return True, "Resume contains too much repetitive text (same words repeated excessively)"
+    
+    # Check 8: Names that sound fake (common test names)
+    fake_names = [
+        'john doe', 'jane doe', 'test user', 'sample name', 'your name',
+        'abc xyz', 'name surname', 'first last', 'student name', 'candidate name',
+        'asdf asdf', 'qwer qwer', 'test test', 'dummy user'
+    ]
+    for fake_name in fake_names:
+        if fake_name in text_lower:
+            return True, f"Resume contains placeholder name: '{fake_name}'"
+    
+    # Check 9: Must have some numbers (dates, percentages, GPA, phone, etc.)
+    numbers = re.findall(r'\d+', text)
+    if len(numbers) < 3:
+        return True, "Resume lacks numerical data (should include dates, GPA, percentages, contact info, etc.)"
+    
+    # Check 10: Suspicious patterns - all caps or no caps
+    if text.isupper():
+        return True, "Resume is entirely in UPPERCASE (appears unprofessional/spam)"
+    
+    if text.islower() and len(text) > 200:
+        return True, "Resume is entirely in lowercase (appears unprofessional/spam)"
+    
+    return False, "Resume appears legitimate"
+
+
+def extract_skills_from_text(text: str) -> list:
+    """Extract technical skills from resume text"""
+    text_lower = text.lower()
+    
+    # Comprehensive skill database
+    all_skills = {
+        # Programming Languages
+        "python", "java", "javascript", "c++", "c#", "ruby", "php", "swift", "kotlin", 
+        "go", "rust", "scala", "r", "matlab", "typescript", "dart", "perl", "vb.net",
+        
+        # Web Technologies
+        "html", "css", "react", "angular", "vue", "vue.js", "node.js", "express", 
+        "django", "flask", "fastapi", "spring boot", "asp.net", "bootstrap", "tailwind",
+        "jquery", "next.js", "nuxt.js", "svelte", "ember.js",
+        
+        # Databases
+        "sql", "mysql", "postgresql", "mongodb", "redis", "cassandra", "oracle",
+        "sqlite", "mariadb", "dynamodb", "firebase", "elasticsearch", "neo4j",
+        
+        # Cloud & DevOps
+        "aws", "azure", "gcp", "docker", "kubernetes", "jenkins", "gitlab", "github actions",
+        "terraform", "ansible", "chef", "puppet", "circleci", "travis ci",
+        
+        # Data Science & ML
+        "machine learning", "deep learning", "tensorflow", "pytorch", "keras", "scikit-learn",
+        "pandas", "numpy", "matplotlib", "seaborn", "nlp", "computer vision", "opencv",
+        "spacy", "nltk", "hugging face", "transformers", "neural networks",
+        
+        # Mobile Development
+        "android", "ios", "react native", "flutter", "xamarin", "cordova", "ionic",
+        
+        # Testing & QA
+        "selenium", "junit", "pytest", "jest", "mocha", "cypress", "testng",
+        
+        # Security
+        "cybersecurity", "network security", "ethical hacking", "penetration testing",
+        "kali linux", "metasploit", "wireshark", "nmap", "burp suite", "owasp",
+        
+        # Other Tools
+        "git", "github", "jira", "confluence", "postman", "swagger", "graphql",
+        "rest api", "microservices", "agile", "scrum", "kanban", "ci/cd"
+    }
+    
+    found_skills = []
+    for skill in all_skills:
+        if skill in text_lower:
+            found_skills.append(skill)
+    
+    return list(set(found_skills))  # Remove duplicates
+
+
+def analyze_resume_against_job(resume_text: str, job_description: dict) -> tuple[float, dict]:
+    """
+    Analyze resume against specific job description
+    THIS IS THE PRIMARY SCORING METHOD - Based on resume content vs job requirements
+    
+    Returns: (ats_score 0-100, detailed_analysis dict)
+    
+    job_description should contain:
+    - domain: str
+    - required_skills: str (comma-separated)
+    - min_cgpa: float
+    """
+    text_lower = resume_text.lower()
+    total_score = 0.0
+    analysis = {
+        "Resume Quality": {"score": 0, "max": 25, "msg": ""},
+        "Job-Specific Keywords": {"score": 0, "max": 30, "msg": ""},
+        "Technical Skills Match": {"score": 0, "max": 25, "msg": ""},
+        "Experience & Impact": {"score": 0, "max": 20, "msg": ""}
+    }
+    
+    # ===== 1. Resume Quality & Structure (25 points) =====
+    word_count = len(text_lower.split())
+    sections = ["education", "experience", "skills", "project", "internship", "certification", "summary"]
+    found_sections = sum(1 for s in sections if s in text_lower)
+    
+    quality_score = 0
+    
+    # Word count scoring
+    if 200 <= word_count <= 600:
+        quality_score += 15
+        analysis["Resume Quality"]["msg"] = f"✓ Optimal length ({word_count} words)"
+    elif word_count < 200:
+        quality_score += 8
+        analysis["Resume Quality"]["msg"] = f"⚠ Too brief ({word_count} words) - add more details"
+    elif word_count <= 800:
+        quality_score += 12
+        analysis["Resume Quality"]["msg"] = f"✓ Good length ({word_count} words)"
+    else:
+        quality_score += 8
+        analysis["Resume Quality"]["msg"] = f"⚠ Consider condensing ({word_count} words)"
+    
+    # Section structure scoring
+    section_score = min(found_sections * 2, 10)
+    quality_score += section_score
+    analysis["Resume Quality"]["msg"] += f" | {found_sections}/{len(sections)} sections found"
+    analysis["Resume Quality"]["score"] = quality_score
+    total_score += quality_score
+    
+    # ===== 2. Job-Specific Keywords (30 points) =====
+    domain = job_description.get('domain', '').lower()
+    
+    # Domain-specific keyword databases
+    domain_keywords = {
+        "ai": ["ai", "artificial intelligence", "machine learning", "deep learning", "neural", 
+               "tensorflow", "pytorch", "nlp", "natural language", "computer vision", "data science",
+               "model", "algorithm", "prediction", "classification", "regression"],
+        "data science": ["data science", "data analysis", "analytics", "statistics", "statistical",
+                        "machine learning", "python", "r", "sql", "pandas", "numpy", "visualization", 
+                        "big data", "predictive", "modeling", "insights", "dashboard"],
+        "cyber security": ["cybersecurity", "security", "penetration testing", "ethical hacking",
+                          "network security", "firewall", "encryption", "vulnerability", "threat",
+                          "malware", "incident response", "security audit", "compliance", "owasp"],
+        "web development": ["web development", "frontend", "backend", "full stack", "html", "css",
+                           "javascript", "react", "angular", "vue", "node.js", "api", "rest",
+                           "responsive", "ui/ux", "website", "web application"],
+        "mobile development": ["mobile", "android", "ios", "app development", "react native", "flutter",
+                              "swift", "kotlin", "mobile app", "smartphone", "mobile ui"],
+        "cloud computing": ["cloud", "aws", "azure", "gcp", "cloud computing", "serverless", "iaas",
+                           "paas", "saas", "cloud architecture", "cloud migration", "devops"],
+        "devops": ["devops", "ci/cd", "continuous integration", "continuous deployment", "docker",
+                  "kubernetes", "jenkins", "gitlab", "automation", "infrastructure", "deployment"]
+    }
+    
+    # Normalize domain for matching
+    domain_normalized = normalize_domain(domain)
+    matched_domain_key = None
+    
+    for key in domain_keywords.keys():
+        if normalize_domain(key) == domain_normalized:
+            matched_domain_key = key
+            break
+    
+    if matched_domain_key:
+        keywords = domain_keywords[matched_domain_key]
+        found_keywords = sum(1 for kw in keywords if kw in text_lower)
+        keyword_score = min((found_keywords / len(keywords)) * 30, 30)
+        analysis["Job-Specific Keywords"]["score"] = round(keyword_score, 1)
+        analysis["Job-Specific Keywords"]["msg"] = f"Found {found_keywords}/{len(keywords)} domain keywords"
+    else:
+        # Generic scoring if domain not recognized
+        analysis["Job-Specific Keywords"]["score"] = 0
+        analysis["Job-Specific Keywords"]["msg"] = f"Domain '{domain}' not in database - manual review needed"
+    
+    total_score += analysis["Job-Specific Keywords"]["score"]
+    
+    # ===== 3. Technical Skills Match (25 points) =====
+    required_skills = job_description.get('required_skills', '')
+    if required_skills:
+        required_skills_list = [s.strip().lower() for s in required_skills.split(',') if s.strip()]
+        
+        if required_skills_list:
+            # Extract skills from resume
+            extracted_skills = extract_skills_from_text(text_lower)
+            extracted_skills_lower = [s.lower() for s in extracted_skills]
+            
+            # Calculate match
+            matched_skills = []
+            for req_skill in required_skills_list:
+                # Check exact match or partial match
+                if req_skill in extracted_skills_lower or any(req_skill in es for es in extracted_skills_lower):
+                    matched_skills.append(req_skill)
+            
+            match_percentage = len(matched_skills) / len(required_skills_list)
+            skill_score = match_percentage * 25
+            
+            analysis["Technical Skills Match"]["score"] = round(skill_score, 1)
+            analysis["Technical Skills Match"]["msg"] = f"Matched {len(matched_skills)}/{len(required_skills_list)} required skills"
+            
+            if matched_skills:
+                analysis["Technical Skills Match"]["msg"] += f": {', '.join(matched_skills[:5])}"
+        else:
+            analysis["Technical Skills Match"]["score"] = 0
+            analysis["Technical Skills Match"]["msg"] = "No required skills specified"
+    else:
+        analysis["Technical Skills Match"]["score"] = 0
+        analysis["Technical Skills Match"]["msg"] = "No required skills specified"
+    
+    total_score += analysis["Technical Skills Match"]["score"]
+    
+    # ===== 4. Experience & Impact Language (20 points) =====
+    # Action verbs and achievement language
+    action_verbs = [
+        "developed", "created", "built", "designed", "implemented", "achieved", "improved",
+        "optimized", "managed", "led", "coordinated", "delivered", "launched", "deployed",
+        "established", "increased", "reduced", "enhanced", "automated", "streamlined"
+    ]
+    
+    found_actions = sum(1 for verb in action_verbs if verb in text_lower)
+    action_score = min(found_actions * 1.5, 10)
+    
+    # Quantifiable achievements (numbers, percentages)
+    quantifiable_patterns = [
+        r'\d+%',  # Percentages
+        r'\d+x',  # Multipliers
+        r'increased.*\d+',
+        r'reduced.*\d+',
+        r'improved.*\d+',
+        r'saved.*\d+',
+        r'\d+.*users',
+        r'\d+.*customers',
+        r'\d+.*projects'
+    ]
+    
+    has_quantifiable = any(re.search(pattern, text_lower) for pattern in quantifiable_patterns)
+    quantifiable_score = 10 if has_quantifiable else 5
+    
+    experience_score = action_score + quantifiable_score
+    analysis["Experience & Impact"]["score"] = min(round(experience_score, 1), 20)
+    
+    if has_quantifiable and found_actions >= 3:
+        analysis["Experience & Impact"]["msg"] = "✓ Strong achievement language with quantifiable results"
+    elif has_quantifiable:
+        analysis["Experience & Impact"]["msg"] = "Good quantifiable achievements - add more action verbs"
+    elif found_actions >= 3:
+        analysis["Experience & Impact"]["msg"] = "Good action verbs - add quantifiable results"
+    else:
+        analysis["Experience & Impact"]["msg"] = "Add action verbs and quantifiable achievements"
+    
+    total_score += analysis["Experience & Impact"]["score"]
+    
+    # Ensure score is within bounds
+    total_score = min(max(total_score, 0), 100.0)
+    
+    return round(total_score, 1), analysis
+
+
+def calculate_resume_quality_score(text: str, domain: str = "") -> tuple[float, dict]:
+    """
+    LEGACY FUNCTION - Now redirects to analyze_resume_against_job
+    Kept for backwards compatibility
+    """
+    # Create a basic job description
+    job_desc = {
+        'domain': domain,
+        'required_skills': '',
+        'min_cgpa': 0
+    }
+    
+    return analyze_resume_against_job(text, job_desc)
+
+
+def student_company_position_score(student, position, resume_text=None):
+    """
+    Calculate match score between student and position
+    PRIMARY METHOD: Score based on resume content vs job requirements
+    
+    Scoring breakdown:
+    - 60% Resume ATS score (analyzed against job description)
+    - 20% CGPA
+    - 10% Experience
+    - 10% Extracted skills bonus
+    
+    CRITICAL: Fake resumes are automatically disqualified (score = 0)
+    """
+    sid, skills, cgpa, interest_domain, exp, extracted_skills = student
+    pid, cid, pdomain, req_skills, min_cgpa, pos, stipend = position
+
+    # REQUIREMENT 1: Domain MUST match
+    if normalize_domain(interest_domain) != normalize_domain(pdomain):
+        return 0.0
+
+    # REQUIREMENT 2: CGPA MUST meet minimum
+    if cgpa < min_cgpa:
+        return 0.0
+
+    # REQUIREMENT 3: Resume MUST NOT be fake
+    if resume_text:
+        is_fake, fake_reason = is_resume_fake_or_spam(resume_text)
+        if is_fake:
+            print(f"  ⚠️  Student {sid} DISQUALIFIED: {fake_reason}")
+            return 0.0
+
+    score = 0.0
+    
+    # PRIMARY SCORING: Resume content analysis (60 points max)
+    if resume_text:
+        job_desc = {
+            'domain': pdomain,
+            'required_skills': req_skills,
+            'min_cgpa': min_cgpa
+        }
+        ats_score, analysis = analyze_resume_against_job(resume_text, job_desc)
+        
+        # 60% weight on resume ATS score
+        score += ats_score * 0.6
+        
+        print(f"  📄 Student {sid} ATS Score: {ats_score}/100")
+        print(f"     Domain: {pdomain} | Required Skills: {req_skills[:50]}...")
+    else:
+        # NO RESUME = Major penalty, only 15 points max from skills
+        all_skills = (skills + ',' + extracted_skills) if extracted_skills else skills
+        skill_match = calculate_skill_match(all_skills, req_skills)
+        score += skill_match * 0.15
+        print(f"  ⚠️  Student {sid} has NO RESUME - Limited to {score:.1f} points from skills")
+
+    # CGPA contribution (20 points max)
+    cgpa_points = (cgpa / 10.0) * 20
+    score += cgpa_points
+    
+    # Experience contribution (10 points max)
+    exp_points = min(exp * 3.33, 10)
+    score += exp_points
+    
+    # Bonus for extracted skills matching (10 points max)
+    if extracted_skills and req_skills:
+        resume_skill_match = calculate_skill_match(extracted_skills, req_skills)
+        skill_bonus = min(resume_skill_match / 10, 10)
+        score += skill_bonus
+
+    final_score = min(round(score, 2), 100.0)
+    print(f"  ✅ Student {sid} Final Score: {final_score}/100 (CGPA: {cgpa_points:.1f}, Exp: {exp_points:.1f})")
+    
+    return final_score
+
+
+def run_smart_allocation(students, positions, resume_texts=None):
+    """
+    Run smart allocation algorithm with STRICT fake resume detection
+    
+    students: list of tuples (user_id, skills, cgpa, interest_domain, experience_years, extracted_skills)
+    positions: list of tuples (position_id, company_id, domain, required_skills, min_cgpa, positions, stipend)
+    resume_texts: dict {student_id: resume_text}
+    
+    CRITICAL CHANGES:
+    1. Students with fake resumes are COMPLETELY EXCLUDED
+    2. Students without resumes get heavily penalized but not excluded
+    3. Scoring is PRIMARY based on resume content vs job requirements
+    """
+    if resume_texts is None:
+        resume_texts = {}
+    
+    print("\n" + "=" * 80)
+    print("🔍 PHASE 1: VALIDATING STUDENT RESUMES")
+    print("=" * 80)
+    
+    # Filter out students with fake resumes BEFORE allocation
+    valid_students = []
+    fake_count = 0
+    no_resume_count = 0
+    
+    for student in students:
+        student_id = student[0]
+        resume_text = resume_texts.get(student_id, None)
+        
+        if resume_text:
+            is_fake, fake_reason = is_resume_fake_or_spam(resume_text)
+            if is_fake:
+                print(f"❌ Student {student_id} EXCLUDED: {fake_reason}")
+                fake_count += 1
+                # DO NOT add to valid_students
+            else:
+                print(f"✅ Student {student_id}: Resume validated")
+                valid_students.append(student)
+        else:
+            print(f"❌ Student {student_id} EXCLUDED: No resume uploaded")
+            no_resume_count += 1
+            # DO NOT add to valid_students - students MUST have resumes
+    
+    print(f"\n📊 VALIDATION SUMMARY:")
+    print(f"   Total students: {len(students)}")
+    print(f"   Valid resumes: {len(valid_students) - no_resume_count}")
+    print(f"   No resume (excluded): {no_resume_count}")
+    print(f"   Fake resumes (excluded): {fake_count}")
+    print(f"   Eligible for allocation: {len(valid_students)}")
+    
+    print("\n" + "=" * 80)
+    print("🎯 PHASE 2: CALCULATING MATCH SCORES")
+    print("=" * 80)
+    
+    matches = []
+    
+    for position in positions:
+        pid = position[0]
+        company_id = position[1]
+        domain = position[2]
+        pos_num = position[5]
+        
+        print(f"\n📋 Position {pid}: {domain} at Company {company_id} ({pos_num} openings)")
+        
+        position_matches = []
+        for student in valid_students:
+            student_id = student[0]
+            resume_text = resume_texts.get(student_id, None)
+            score = student_company_position_score(student, position, resume_text)
+            
+            if score > 0:
+                position_matches.append((student_id, score))
+        
+        # Sort by score (highest first)
+        position_matches.sort(key=lambda x: x[1], reverse=True)
+        
+        print(f"✅ {len(position_matches)} eligible students for this position")
+        if position_matches:
+            print(f"   Top 3 scores: {[f'{s[0]}:{s[1]:.1f}' for s in position_matches[:3]]}")
+        
+        matches.append((pid, company_id, pos_num, position_matches))
+    
+    # Sort positions by best candidate score
+    matches.sort(key=lambda x: x[3][0][1] if x[3] else 0, reverse=True)
+    
+    print("\n" + "=" * 80)
+    print("🎓 PHASE 3: ALLOCATING STUDENTS TO POSITIONS")
+    print("=" * 80)
+    
+    allocations = []
+    taken = set()
+    
+    for pid, cid, pos_num, pmatches in matches:
+        count = 0
+        rank = 1
+        
+        print(f"\n🏢 Allocating for Position {pid}:")
+        
+        for sid, score in pmatches:
+            if sid not in taken and count < pos_num:
+                allocations.append((sid, cid, pid, score, rank))
+                taken.add(sid)
+                print(f"   ✅ Rank {rank}: Student {sid} - Score {score:.1f}/100")
+                count += 1
+                rank += 1
+        
+        print(f"   Filled: {count}/{pos_num} positions")
+    
+    print("\n" + "=" * 80)
+    print("✅ ALLOCATION COMPLETE")
+    print("=" * 80)
+    print(f"Total allocations: {len(allocations)}")
+    print(f"Students allocated: {len(taken)}")
+    print(f"Students not allocated: {len(valid_students) - len(taken)}")
+    print(f"Students excluded (fake resumes): {fake_count}")
+    print("=" * 80 + "\n")
+    
+    return allocations
+
+def analyze_resume_quality(text: str):
+    """
+    Analyze resume quality - used during profile update
+    Returns: (score, detailed_analysis)
+    """
+    # Create a generic job description for baseline analysis
+    job_desc = {
+        'domain': 'General',
+        'required_skills': '',
+        'min_cgpa': 0
+    }
+    
+    return analyze_resume_against_job(text, job_desc)
